@@ -95,10 +95,6 @@ def iniciar_pago(
         )
 
 
-@router.post("/webhook-pagos")
-def webhook_pagos():
-    pass
-
 
 @router.post(
     "/escanear-acceso",
