@@ -1,197 +1,109 @@
-from uuid import uuid4
-
 from datetime import datetime
-from sqlalchemy.orm import Session
+from typing import List
 
-from ..models import Entrada, PrecioSectorEvento, Venta
-from .pasarela_pago import PasarelaPago
-
-
-class EntradasNoDisponiblesError(Exception):
-    pass
-
-
-class PagoDenegadoError(Exception):
-    pass
-
-class TicketInvalidoError(Exception):
-    pass
-
-
-class EntradaYaUtilizadaError(Exception):
-    pass
-
-
-class TicketNoEmitidoError(Exception):
-    pass
+from app.models import EstadoEntrada, EstadoVenta, Venta
+from app.repositories import (ClienteRepository, EntradaRepository,
+                              PrecioRepository, VentaRepository)
+from app.services.excepciones import (CantidadInvalida, CapacidadInsuficiente,
+                                      ClienteNoEncontrado, EntradasNoDisponibles,
+                                      EntradaYaUtilizada, PagoDenegado,
+                                      PrecioNoDefinido, TicketInvalido,
+                                      TicketNoEmitido)
+from app.services.pasarela_pago import PasarelaPago
 
 
 class TicketService:
+    """Lógica de negocio. Recibe sus dependencias por constructor (DIP)."""
 
-    def __init__(self, db: Session, pasarela: PasarelaPago):
-        self.db = db
+    def __init__(
+        self,
+        entradas: EntradaRepository,
+        precios: PrecioRepository,
+        clientes: ClienteRepository,
+        ventas: VentaRepository,
+        pasarela: PasarelaPago,
+    ):
+        self.entradas = entradas
+        self.precios = precios
+        self.clientes = clientes
+        self.ventas = ventas
         self.pasarela = pasarela
 
-    def cotizar(
-        self,
-        evento_id: int,
-        sector_id: int,
-        cantidad: int
-    ) -> float:
-
+    # ---------------- HU1 ----------------
+    def cotizar(self, evento_id: int, sector_id: int, cantidad: int) -> float:
         if cantidad <= 0:
-            raise ValueError(
+            raise CantidadInvalida(
                 "La cantidad de entradas solicitadas debe ser mayor a cero"
             )
 
-        precio_sector = (
-            self.db.query(PrecioSectorEvento)
-            .filter(
-                PrecioSectorEvento.evento_id == evento_id,
-                PrecioSectorEvento.sector_id == sector_id
-            )
-            .first()
-        )
+        precio = self.precios.obtener(evento_id, sector_id)
+        if precio is None:
+            raise PrecioNoDefinido("No hay precio definido para ese evento y sector")
 
-        if precio_sector is None:
-            raise ValueError(
-                "Capacidad insuficiente o entradas no disponibles"
-            )
+        if self.entradas.contar_disponibles(evento_id, sector_id) < cantidad:
+            raise CapacidadInsuficiente("Capacidad insuficiente o entradas no disponibles")
 
-        entradas_disponibles = (
-            self.db.query(Entrada)
-            .filter(
-                Entrada.evento_id == evento_id,
-                Entrada.sector_id == sector_id,
-                Entrada.estado == "Disponible"
-            )
-            .count()
-        )
+        return precio.calcular_subtotal(cantidad)
 
-        if cantidad > entradas_disponibles:
-            raise ValueError(
-                "Capacidad insuficiente o entradas no disponibles"
-            )
-
-        return precio_sector.precio * cantidad
-
-    def procesar_pago(
-        self,
-        cliente_id: int,
-        entradas_ids: list[int],
-        datos_tarjeta: dict
-    ) -> Venta:
-
+    # ---------------- HU2 ----------------
+    def iniciar_pago(self, cliente_id: int, entradas_ids: List[int], numero_tarjeta: str) -> Venta:
         if not entradas_ids:
-            raise ValueError("Debe seleccionar al menos una entrada")
+            raise CantidadInvalida("Debe seleccionar al menos una entrada")
+        ids = list(dict.fromkeys(entradas_ids))  # sin duplicados, mantiene orden
 
-        # Revalidación de disponibilidad JUSTO antes del pago
-        entradas = (
-            self.db.query(Entrada)
-            .filter(Entrada.id.in_(entradas_ids))
-            .all()
-        )
+        if self.clientes.obtener(cliente_id) is None:
+            raise ClienteNoEncontrado("Cliente no encontrado")
 
-        if len(entradas) != len(set(entradas_ids)):
-            raise EntradasNoDisponiblesError(
+        entradas = self.entradas.listar_por_ids(ids)
+        if len(entradas) != len(ids) or not all(e.esta_disponible for e in entradas):
+            raise EntradasNoDisponibles(
                 "Los lugares seleccionados ya no se encuentran disponibles"
             )
 
-        if any(entrada.estado != "Disponible" for entrada in entradas):
-            raise EntradasNoDisponiblesError(
-                "Los lugares seleccionados ya no se encuentran disponibles"
-            )
-
-        # Calcular el total de las entradas seleccionadas
         total = 0.0
-
-        for entrada in entradas:
-            precio = (
-                self.db.query(PrecioSectorEvento)
-                .filter(
-                    PrecioSectorEvento.evento_id == entrada.evento_id,
-                    PrecioSectorEvento.sector_id == entrada.sector_id
-                )
-                .first()
-            )
-
+        for e in entradas:
+            precio = self.precios.obtener(e.evento_id, e.sector_id)
             if precio is None:
-                raise ValueError(
-                    "No se encontró el precio de una de las entradas"
-                )
-
+                raise PrecioNoDefinido("No hay precio definido para una de las entradas")
             total += precio.precio
 
-        # IMPORTANTE:
-        # La pasarela se invoca solamente después
-        # de haber revalidado el stock.
-        resultado = self.pasarela.cobrar(
-            total,
-            datos_tarjeta
+        # Reserva atómica ANTES de consultar la pasarela (concurrencia).
+        if not self.entradas.reservar(ids):
+            raise EntradasNoDisponibles(
+                "Los lugares seleccionados ya no se encuentran disponibles"
+            )
+
+        try:
+            aprobado = self.pasarela.procesar_pago(total, numero_tarjeta)
+        except Exception:
+            self.entradas.liberar(ids)
+            raise
+
+        if not aprobado:
+            self.entradas.liberar(ids)
+            raise PagoDenegado("Pago denegado")
+
+        venta = self.ventas.guardar(
+            Venta(cliente_id=cliente_id, estado=EstadoVenta.PAGADA, total=total)
         )
-
-        if resultado == "Rechazado":
-            self.db.rollback()
-
-            raise PagoDenegadoError("Pago denegado")
-
-        # Pago aprobado: crear la venta
-        venta = Venta(
-            cliente_id=cliente_id,
-            estado="Pagada",
-            total=total
-        )
-
-        self.db.add(venta)
-
-        # Emitir las entradas
-        for entrada in entradas:
-            entrada.estado = "Emitida"
-            entrada.codigo_qr = str(uuid4())
-
-        self.db.commit()
-        self.db.refresh(venta)
-
+        for e in self.entradas.listar_por_ids(ids):
+            e.venta_id = venta.id
+            e.emitir()
+        self.ventas.commit()
         return venta
 
+    # ---------------- HU3 ----------------
     def escanear_acceso(self, codigo_qr: str) -> datetime:
-
-        entrada = (
-            self.db.query(Entrada)
-            .filter(Entrada.codigo_qr == codigo_qr)
-            .first()
-        )
-
-        # QR inexistente
+        entrada = self.entradas.buscar_por_qr(codigo_qr)
         if entrada is None:
-            raise TicketInvalidoError(
-                "Ticket Inválido o Inexistente"
-            )
+            raise TicketInvalido("Ticket Inválido o Inexistente")
 
-        # Entrada ya utilizada
-        if entrada.estado == "Utilizada":
-            raise EntradaYaUtilizadaError(
-                "Entrada ya utilizada"
-            )
+        if entrada.estado == EstadoEntrada.UTILIZADA:
+            raise EntradaYaUtilizada("Entrada ya utilizada")
 
-        # Entrada todavía no emitida
-        if entrada.estado in ("Disponible", "Reservada"):
-            raise TicketNoEmitidoError(
-                "Ticket no emitido / Falta de pago"
-            )
+        if entrada.estado != EstadoEntrada.EMITIDA:
+            raise TicketNoEmitido("Ticket no emitido / Falta de pago")
 
-        # Camino feliz: entrada Emitida
-        if entrada.estado == "Emitida":
-            hora_ingreso = datetime.now()
-
-            entrada.estado = "Utilizada"
-            entrada.hora_ingreso = hora_ingreso
-
-            self.db.commit()
-
-            return hora_ingreso
-
-        # Por seguridad, cualquier estado no contemplado
-        raise TicketNoEmitidoError(
-            "Ticket no emitido / Falta de pago"
-        )
+        hora = entrada.registrar_ingreso()
+        self.entradas.commit()
+        return hora

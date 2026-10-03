@@ -1,7 +1,22 @@
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, Enum, DateTime
+from datetime import datetime
+
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
 
-from .database import Base
+from app.database import Base
+
+
+class EstadoEntrada:
+    DISPONIBLE = "Disponible"
+    RESERVADA = "Reservada"
+    EMITIDA = "Emitida"
+    UTILIZADA = "Utilizada"
+
+
+class EstadoVenta:
+    PENDIENTE = "Pendiente"
+    PAGADA = "Pagada"
+    CANCELADA = "Cancelada"
 
 
 class Lugar(Base):
@@ -11,16 +26,8 @@ class Lugar(Base):
     nombre = Column(String, nullable=False)
     direccion = Column(String, nullable=False)
 
-    sectores = relationship(
-        "Sector",
-        back_populates="lugar",
-        cascade="all, delete-orphan"
-    )
-
-    eventos = relationship(
-        "Evento",
-        back_populates="lugar"
-    )
+    sectores = relationship("Sector", back_populates="lugar")
+    eventos = relationship("Evento", back_populates="lugar")
 
 
 class Sector(Base):
@@ -29,23 +36,9 @@ class Sector(Base):
     id = Column(Integer, primary_key=True, index=True)
     nombre = Column(String, nullable=False)
     capacidad = Column(Integer, nullable=False)
-
     lugar_id = Column(Integer, ForeignKey("lugares.id"), nullable=False)
 
-    lugar = relationship(
-        "Lugar",
-        back_populates="sectores"
-    )
-
-    precios_eventos = relationship(
-        "PrecioSectorEvento",
-        back_populates="sector"
-    )
-
-    entradas = relationship(
-        "Entrada",
-        back_populates="sector"
-    )
+    lugar = relationship("Lugar", back_populates="sectores")
 
 
 class Evento(Base):
@@ -53,78 +46,27 @@ class Evento(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     nombre = Column(String, nullable=False)
-
     lugar_id = Column(Integer, ForeignKey("lugares.id"), nullable=False)
 
-    lugar = relationship(
-        "Lugar",
-        back_populates="eventos"
-    )
-
-    precios_sectores = relationship(
-        "PrecioSectorEvento",
-        back_populates="evento"
-    )
-
-    entradas = relationship(
-        "Entrada",
-        back_populates="evento"
-    )
+    lugar = relationship("Lugar", back_populates="eventos")
+    precios = relationship("PrecioSectorEvento", back_populates="evento")
 
 
 class PrecioSectorEvento(Base):
+    """Precio de un sector para un evento puntual."""
+
     __tablename__ = "precios_sector_evento"
 
     id = Column(Integer, primary_key=True, index=True)
-
     evento_id = Column(Integer, ForeignKey("eventos.id"), nullable=False)
     sector_id = Column(Integer, ForeignKey("sectores.id"), nullable=False)
-
     precio = Column(Float, nullable=False)
 
-    evento = relationship(
-        "Evento",
-        back_populates="precios_sectores"
-    )
+    evento = relationship("Evento", back_populates="precios")
 
-    sector = relationship(
-        "Sector",
-        back_populates="precios_eventos"
-    )
-
-
-class Entrada(Base):
-    __tablename__ = "entradas"
-
-    id = Column(Integer, primary_key=True, index=True)
-
-    evento_id = Column(Integer, ForeignKey("eventos.id"), nullable=False)
-    sector_id = Column(Integer, ForeignKey("sectores.id"), nullable=False)
-
-    estado = Column(
-        Enum(
-            "Disponible",
-            "Reservada",
-            "Emitida",
-            "Utilizada",
-            name="estado_entrada"
-        ),
-        nullable=False,
-        default="Disponible"
-    )
-
-    codigo_qr = Column(String, unique=True, nullable=False)
-    hora_ingreso = Column(DateTime, nullable=True)
-
-    evento = relationship(
-        "Evento",
-        back_populates="entradas"
-    )
-
-    sector = relationship(
-        "Sector",
-        back_populates="entradas"
-    )
+    # GRASP Experto en Información: quien tiene el precio calcula el subtotal.
+    def calcular_subtotal(self, cantidad: int) -> float:
+        return self.precio * cantidad
 
 
 class Cliente(Base):
@@ -134,33 +76,44 @@ class Cliente(Base):
     nombre = Column(String, nullable=False)
     email = Column(String, nullable=False)
 
-    ventas = relationship(
-        "Venta",
-        back_populates="cliente"
-    )
+    ventas = relationship("Venta", back_populates="cliente")
 
 
 class Venta(Base):
     __tablename__ = "ventas"
 
     id = Column(Integer, primary_key=True, index=True)
-
     cliente_id = Column(Integer, ForeignKey("clientes.id"), nullable=False)
+    estado = Column(String, default=EstadoVenta.PENDIENTE, nullable=False)
+    total = Column(Float, default=0.0, nullable=False)
+    fecha = Column(DateTime, default=datetime.now)
 
-    estado = Column(
-        Enum(
-            "Pendiente",
-            "Pagada",
-            "Cancelada",
-            name="estado_venta"
-        ),
-        nullable=False,
-        default="Pendiente"
-    )
+    cliente = relationship("Cliente", back_populates="ventas")
+    entradas = relationship("Entrada", back_populates="venta")
 
-    total = Column(Float, nullable=False, default=0)
 
-    cliente = relationship(
-        "Cliente",
-        back_populates="ventas"
-    )
+class Entrada(Base):
+    __tablename__ = "entradas"
+
+    id = Column(Integer, primary_key=True, index=True)
+    evento_id = Column(Integer, ForeignKey("eventos.id"), nullable=False)
+    sector_id = Column(Integer, ForeignKey("sectores.id"), nullable=False)
+    venta_id = Column(Integer, ForeignKey("ventas.id"), nullable=True)
+    estado = Column(String, default=EstadoEntrada.DISPONIBLE, nullable=False)
+    codigo_qr = Column(String, unique=True, index=True, nullable=False)
+    hora_ingreso = Column(DateTime, nullable=True)
+
+    venta = relationship("Venta", back_populates="entradas")
+
+    # Comportamiento propio de la entrada (Experto en Información)
+    @property
+    def esta_disponible(self) -> bool:
+        return self.estado == EstadoEntrada.DISPONIBLE
+
+    def emitir(self) -> None:
+        self.estado = EstadoEntrada.EMITIDA
+
+    def registrar_ingreso(self) -> datetime:
+        self.hora_ingreso = datetime.now()
+        self.estado = EstadoEntrada.UTILIZADA
+        return self.hora_ingreso

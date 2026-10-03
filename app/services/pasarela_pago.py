@@ -2,19 +2,15 @@ from abc import ABC, abstractmethod
 
 
 class PasarelaPago(ABC):
+    """Abstracción de la pasarela (DIP): el servicio depende de esto, no de una implementación."""
 
     @abstractmethod
-    def cobrar(self, monto: float, datos_tarjeta: dict) -> str:
-        pass
+    def procesar_pago(self, monto: float, numero_tarjeta: str) -> bool:
+        """Devuelve True si el pago fue aprobado."""
 
 
 class PasarelaPagoSimulada(PasarelaPago):
+    """Rechaza toda tarjeta cuyo número termine en 0000."""
 
-    def cobrar(self, monto: float, datos_tarjeta: dict) -> str:
-        numero_tarjeta = datos_tarjeta.get("numero", "")
-
-        if numero_tarjeta.endswith("0000"):
-            return "Rechazado"
-
-        return "Aprobado"
-    
+    def procesar_pago(self, monto: float, numero_tarjeta: str) -> bool:
+        return not numero_tarjeta.endswith("0000")

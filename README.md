@@ -1,406 +1,122 @@
 # TP 9 - POO — SmartTicket
 
-API para gestión de entradas y pagos de eventos, desarrollada con **FastAPI**, **SQLAlchemy** y **SQLite**.
+API para gestión de entradas, pagos y control de acceso a eventos, desarrollada con **FastAPI**, **SQLAlchemy** y **SQLite**.
 
-## 📋 Tecnologías
+## Tecnologías
 
-* Python 3.13
-* FastAPI
-* Uvicorn
-* SQLAlchemy
-* SQLite
-* Pydantic
+Python 3.13 · FastAPI · Uvicorn · SQLAlchemy · SQLite · Pydantic
 
----
-
-## 📁 Estructura del proyecto
+## Estructura del proyecto
 
 ```text
-TP_9_POO/
-│
+poo_tp9/
 ├── app/
-│   ├── main.py
-│   ├── database.py
-│   ├── models.py
-│   ├── schemas.py
-│   │
+│   ├── main.py             # App FastAPI, creación de tablas y manejo de errores de negocio
+│   ├── database.py         # Conexión SQLite y sesiones
+│   ├── models.py           # Entidades (Lugar, Sector, Evento, PrecioSectorEvento, Entrada, Cliente, Venta)
+│   ├── schemas.py          # Esquemas Pydantic
+│   ├── repositories.py     # Acceso a datos
 │   ├── routers/
-│   │   └── pagos.py
-│   │
+│   │   └── pagos.py        # Endpoints
 │   └── services/
-│       ├── ticket_service.py
-│       └── pasarela_pago.py
-│
-├── seed.py
-├── database.db
-├── .gitignore
+│       ├── ticket_service.py   # Lógica de negocio
+│       ├── pasarela_pago.py    # PasarelaPago (abstracta) y PasarelaPagoSimulada
+│       └── excepciones.py      # Errores de dominio con su código HTTP
+├── seed.py                 # Datos de prueba
+├── requirements.txt
 └── README.md
 ```
 
----
+## Instalación y ejecución
 
-# 🚀 Instalación
-
-## 1. Clonar el repositorio
-
-```bash
+```powershell
 git clone https://github.com/guadalupemolinna/poo_tp9.git
 cd poo_tp9
-```
-
-## 2. Crear el entorno virtual
-
-### Windows
-
-```powershell
 py -3.13 -m venv .venv
-```
-
-Activarlo:
-
-```powershell
-.venv\Scripts\activate
-```
-
-Si aparece `(.venv)` al comienzo de la terminal, está activado correctamente.
-
----
-
-## 3. Instalar las dependencias
-
-```powershell
-python -m pip install fastapi uvicorn sqlalchemy
-```
-
----
-
-# ▶️ Ejecutar la API
-
-Con el entorno virtual activado:
-
-```powershell
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python seed.py
 python -m uvicorn app.main:app --reload
 ```
 
-La API queda disponible en:
+Si PowerShell bloquea la activación: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned`.
 
-```text
-http://127.0.0.1:8000
-```
+- API: http://127.0.0.1:8000
+- Swagger: http://127.0.0.1:8000/docs
 
-La documentación interactiva de Swagger está en:
+## Base de datos
 
-```text
-http://127.0.0.1:8000/docs
-```
+`seed.py` crea las tablas y carga los datos de prueba en `database.db` (no se sube al repositorio). Para regenerarla: detener el servidor, borrar `database.db` y volver a ejecutar `python seed.py`.
 
-Desde Swagger se pueden probar todos los endpoints.
+> No ejecutar `seed.py` dos veces sobre la misma base: duplica los datos.
 
----
+### Datos de prueba
 
-# 🗃️ Base de datos
+| Entidad | Datos |
+|---|---|
+| Evento | ID 1 — Rock Fest |
+| Sector | ID 1 — Platea, capacidad 10, precio $12000 |
+| Cliente | ID 1 — Juan Pérez (juan@email.com) |
+| Entradas | IDs 1 a 10, QR `QR-ROCKFEST-PLATEA-001` a `QR-ROCKFEST-PLATEA-010` |
 
-El proyecto utiliza **SQLite** mediante SQLAlchemy.
+## Endpoints
 
-La base de datos utilizada es:
-
-```text
-database.db
-```
-
-El proyecto ya incluye datos de prueba para poder probar las historias de usuario.
-
-Si se necesita generar nuevamente una base de datos desde cero, primero eliminar `database.db` y luego ejecutar:
-
-```powershell
-python seed.py
-```
-
-> ⚠️ No ejecutar `seed.py` sobre una base de datos que ya tenga los datos cargados, porque puede generar registros duplicados.
-
----
-
-# 🎟️ Datos de prueba
-
-Actualmente se dispone de:
-
-### Evento
-
-```text
-ID: 1
-Nombre: Rock Fest
-```
-
-### Sector
-
-```text
-ID: 1
-Nombre: Platea
-Capacidad: 10
-Precio: $12000
-```
-
-### Cliente
-
-```text
-ID: 1
-Nombre: Juan Pérez
-Email: juan@email.com
-```
-
----
-
-# 🧪 Historias de Usuario
-
-## HU1 — Cotización de entradas
-
-Endpoint:
-
-```text
-POST /pagos/cotizar
-```
-
-Ejemplo:
+### HU1 — `POST /pagos/cotizar`
 
 ```json
-{
-  "evento_id": 1,
-  "sector_id": 1,
-  "cantidad": 2
-}
+{ "evento_id": 1, "sector_id": 1, "cantidad": 2 }
 ```
+Respuesta `200`: `{ "subtotal": 24000.0 }`
 
-Respuesta esperada:
+| Caso | HTTP | Mensaje |
+|---|---|---|
+| Cantidad 0 o negativa | 400 | La cantidad de entradas solicitadas debe ser mayor a cero |
+| Sin disponibilidad | 400 | Capacidad insuficiente o entradas no disponibles |
 
-```json
-{
-  "subtotal": 24000
-}
-```
-
-### Validaciones
-
-Si la cantidad es `0` o negativa:
-
-```text
-La cantidad de entradas solicitadas debe ser mayor a cero
-```
-
-Si no hay suficientes entradas disponibles:
-
-```text
-Capacidad insuficiente o entradas no disponibles
-```
-
----
-
-# 💳 HU2 — Iniciar pago
-
-Endpoint:
-
-```text
-POST /pagos/iniciar-pago
-```
-
-Ejemplo:
+### HU2 — `POST /pagos/iniciar-pago`
 
 ```json
 {
   "cliente_id": 1,
   "entradas_ids": [1, 2],
-  "datos_tarjeta": {
-    "numero": "1234567890123456"
-  }
+  "datos_tarjeta": { "numero": "1234567890123456" }
 }
 ```
+Respuesta `200`: `{ "venta_id": 1, "estado": "Pagada", "total": 24000.0 }`. Las entradas pasan a **Emitida**.
 
-Respuesta:
+La pasarela es simulada: **toda tarjeta que termina en `0000` es rechazada**.
+
+| Caso | HTTP | Mensaje |
+|---|---|---|
+| Pago rechazado (entradas siguen Disponibles) | 402 | Pago denegado |
+| Entradas ya no disponibles (se aborta antes de la pasarela) | 409 | Los lugares seleccionados ya no se encuentran disponibles |
+
+### HU3 — `POST /pagos/escanear-acceso`
 
 ```json
-{
-  "venta_id": 1,
-  "estado": "Pagada",
-  "total": 24000
-}
+{ "codigo_qr": "QR-ROCKFEST-PLATEA-001" }
 ```
+Respuesta `200`: `{ "mensaje": "Acceso Permitido", "hora_ingreso": "..." }`. La entrada pasa de **Emitida** a **Utilizada**.
 
-Las entradas utilizadas para una compra aprobada pasan a estado:
+| Caso | HTTP | Mensaje |
+|---|---|---|
+| QR inexistente | 404 | Ticket Inválido o Inexistente |
+| Entrada ya utilizada | 409 | Entrada ya utilizada |
+| Entrada Disponible o Reservada | 400 | Ticket no emitido / Falta de pago |
 
-```text
-Emitida
-```
+## Arquitectura (GRASP y SOLID)
 
-### Pago rechazado
+- **SRP:** el router solo recibe la petición y responde; la lógica está en `TicketService`.
+- **Experto en Información:** `PrecioSectorEvento` calcula el subtotal y `Entrada` maneja sus propios cambios de estado.
+- **DIP / inyección de dependencias:** `TicketService` recibe repositorios y `PasarelaPago` por constructor; el router los arma con `Depends`.
+- **Abierto/Cerrado:** se puede reemplazar la pasarela simulada por una real implementando `PasarelaPago`.
+- **Concurrencia:** las entradas se reservan con un `UPDATE` condicional (Disponible → Reservada) antes de consultar la pasarela, y se liberan si el pago es rechazado.
 
-La pasarela de pago está simulada.
+## Flujo de estados
 
-Si el número de tarjeta termina en:
+- Entrada: `Disponible → Reservada → Emitida → Utilizada`
+- Venta: `Pendiente`, `Pagada`, `Cancelada`
 
-```text
-0000
-```
-
-el pago es rechazado.
-
-Ejemplo:
-
-```json
-{
-  "cliente_id": 1,
-  "entradas_ids": [3],
-  "datos_tarjeta": {
-    "numero": "1234567890120000"
-  }
-}
-```
-
-Respuesta:
-
-```text
-Pago denegado
-```
-
-Las entradas no se emiten si el pago es rechazado.
-
----
-
-# 📱 HU3 — Escanear acceso
-
-Endpoint:
-
-```text
-POST /pagos/escanear-acceso
-```
-
-Para una entrada emitida se utiliza el código QR que tenga almacenado.
-
-Ejemplo:
-
-```json
-{
-  "codigo_qr": "CODIGO_DEL_TICKET"
-}
-```
-
-Si el ticket es válido y está emitido:
-
-```json
-{
-  "mensaje": "Acceso Permitido",
-  "hora_ingreso": "2026-10-02T18:39:22.917393"
-}
-```
-
-La entrada pasa de:
-
-```text
-Emitida → Utilizada
-```
-
-y se registra la hora de ingreso.
-
-### Casos de error
-
-#### QR inexistente
-
-Respuesta:
-
-```text
-Ticket Inválido o Inexistente
-```
-
-#### Ticket ya utilizado
-
-Respuesta:
-
-```text
-Entrada ya utilizada
-```
-
-#### Ticket sin emitir
-
-Si la entrada está `Disponible` o `Reservada`:
-
-```text
-Ticket no emitido / Falta de pago
-```
-
----
-
-# 🔌 Otros endpoints
-
-## Webhook de pagos
-
-```text
-POST /pagos/webhook-pagos
-```
-
-Endpoint preparado para recibir notificaciones de una pasarela de pagos.
-
----
-
-# 🧱 Arquitectura
-
-El proyecto está organizado separando responsabilidades:
-
-### `models.py`
-
-Contiene los modelos de SQLAlchemy que representan las entidades de la base de datos.
-
-### `schemas.py`
-
-Contiene los modelos de Pydantic utilizados para validar las solicitudes y respuestas de la API.
-
-### `ticket_service.py`
-
-Contiene la lógica principal del negocio:
-
-* Cotización.
-* Procesamiento de pagos.
-* Emisión de entradas.
-* Validación de tickets.
-* Registro de acceso.
-
-### `pasarela_pago.py`
-
-Contiene la abstracción de la pasarela de pago y una implementación simulada.
-
-Se utiliza una clase abstracta:
-
-```python
-PasarelaPago
-```
-
-y una implementación concreta:
-
-```python
-PasarelaPagoSimulada
-```
-
-### `pagos.py`
-
-Contiene los endpoints de FastAPI relacionados con pagos, cotizaciones y acceso.
-
-### `database.py`
-
-Configura la conexión con SQLite y las sesiones de SQLAlchemy.
-
----
-
-# 🛑 Detener el servidor
-
-Para detener Uvicorn:
-
-```text
-Ctrl + C
-```
-
----
-
-# 👥 Integrantes
-
-TP 9 — Programación Orientada a Objetos
-
-Repositorio:
+## Repositorio
 
 https://github.com/guadalupemolinna/poo_tp9

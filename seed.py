@@ -1,69 +1,41 @@
-from app.database import SessionLocal
-from app.models import Lugar, Sector, Evento, PrecioSectorEvento, Entrada, Cliente
+from app.database import Base, SessionLocal, engine
+from app import models  # noqa: F401
+from app.models import Cliente, Entrada, Evento, Lugar, PrecioSectorEvento, Sector
 
-cliente = Cliente(
-    nombre="Juan Pérez",
-    email="juan@email.com"
-)
-db.add(cliente)
-db.commit()
-db.refresh(cliente)
 
 def cargar_datos_prueba():
+    Base.metadata.create_all(bind=engine)
     db = SessionLocal()
 
     try:
-        # 1. Crear un Lugar
-        lugar = Lugar(
-            nombre="Estadio Municipal",
-            direccion="Av. Costanera 123"
-        )
+        db.add(Cliente(nombre="Juan Pérez", email="juan@email.com"))
+
+        lugar = Lugar(nombre="Estadio Municipal", direccion="Av. Costanera 123")
         db.add(lugar)
         db.commit()
         db.refresh(lugar)
 
-        # 2. Crear un Sector
-        sector = Sector(
-            nombre="Platea",
-            capacidad=10,
-            lugar_id=lugar.id
-        )
-        db.add(sector)
+        sector = Sector(nombre="Platea", capacidad=10, lugar_id=lugar.id)
+        evento = Evento(nombre="Rock Fest", lugar_id=lugar.id)
+        db.add_all([sector, evento])
         db.commit()
         db.refresh(sector)
-
-        # 3. Crear el Evento
-        evento = Evento(
-            nombre="Rock Fest",
-            lugar_id=lugar.id
-        )
-        db.add(evento)
-        db.commit()
         db.refresh(evento)
 
-        # 4. Definir el precio
-        precio_sector = PrecioSectorEvento(
-            evento_id=evento.id,
-            sector_id=sector.id,
-            precio=12000.0
-        )
-        db.add(precio_sector)
+        db.add(PrecioSectorEvento(evento_id=evento.id, sector_id=sector.id, precio=12000.0))
 
-        # 5. Crear 5 entradas disponibles
-        for i in range(1, 6):
-            entrada = Entrada(
+        # Una entrada por cada lugar de la capacidad del sector
+        for i in range(1, sector.capacidad + 1):
+            db.add(Entrada(
                 evento_id=evento.id,
                 sector_id=sector.id,
                 estado="Disponible",
-                codigo_qr=f"QR-ROCKFEST-PLATEA-00{i}"
-            )
-            db.add(entrada)
+                codigo_qr=f"QR-ROCKFEST-PLATEA-{i:03d}",
+            ))
 
         db.commit()
-
         print("¡Datos de prueba cargados con éxito!")
-        print(f"Evento ID: {evento.id}")
-        print(f"Sector ID: {sector.id}")
+        print(f"Evento ID: {evento.id} | Sector ID: {sector.id}")
 
     except Exception as e:
         db.rollback()
