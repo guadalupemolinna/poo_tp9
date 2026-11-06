@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 class CotizacionRequest(BaseModel):
     evento_id: int
     sector_id: int
-    # Sin gt=0 a propósito: la validación la hace el servicio (400 con mensaje propio).
+    # Sin gt=0 a propósito: la validación la hace el servicio.
     cantidad: int = Field(..., examples=[2])
 
 
@@ -42,3 +42,63 @@ class EscaneoResponse(BaseModel):
     mensaje: str
     hora_ingreso: datetime
 
+
+# ---- CRUD BÁSICO ----
+class LugarCreate(BaseModel):
+    nombre: str
+    direccion: str
+
+class LugarRead(BaseModel):
+    id: int
+    nombre: str
+    direccion: str
+    class Config:
+        from_attributes = True
+
+class SectorCreate(BaseModel):
+    nombre: str
+    capacidad: int
+    lugar_id: int
+
+class SectorRead(BaseModel):
+    id: int
+    nombre: str
+    capacidad: int
+    lugar_id: int
+    class Config:
+        from_attributes = True
+
+class EventoCreate(BaseModel):
+    nombre: str
+    lugar_id: int
+
+class EventoRead(BaseModel):
+    id: int
+    nombre: str
+    lugar_id: int
+    class Config:
+        from_attributes = True
+
+class ClienteCreate(BaseModel):
+    nombre: str
+    email: str
+
+class ClienteRead(BaseModel):
+    id: int
+    nombre: str
+    email: str
+    class Config:
+        from_attributes = True
+
+class PrecioSectorEventoCreate(BaseModel):
+    evento_id: int
+    sector_id: int
+    precio: float
+
+class PrecioSectorEventoRead(BaseModel):
+    id: int
+    evento_id: int
+    sector_id: int
+    precio: float
+    class Config:
+        from_attributes = True

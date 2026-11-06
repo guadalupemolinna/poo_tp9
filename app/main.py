@@ -1,9 +1,9 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from app import models  # noqa: F401  (registra las tablas)
+from app import models  # noqa: F401
 from app.database import Base, engine
-from app.routers import pagos
+from app.routers import pagos, crud
 from app.services.excepciones import DominioError
 
 Base.metadata.create_all(bind=engine)
@@ -21,6 +21,7 @@ async def manejar_error_dominio(request: Request, exc: DominioError):
 
 
 app.include_router(pagos.router)
+app.include_router(crud.router)
 
 
 @app.get("/", tags=["Root"])
